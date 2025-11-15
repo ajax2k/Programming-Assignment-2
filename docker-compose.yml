@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  network1:
+    image: python:3.11
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: tail -f /dev/null
+    networks:
+      - mynet
+
+  network2:
+    image: python:3.11
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: tail -f /dev/null
+    networks:
+      - mynet
+
+  network3:
+    image: python:3.11
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: tail -f /dev/null
+    networks:
+      - mynet
+
+networks:
+  mynet:
+    driver: bridge
