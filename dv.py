@@ -120,10 +120,10 @@ def state(servers, rc, interval):
     for srv_id in servers:
         # user has 0 cost
         if srv_id == user:
-            rt[srv_id] = (user, 0)
+            rt[srv_id] = 0
         # neighbor use thier cost
         elif srv_id in neighbors:
-            rt[srv_id] = (srv_id, neighbors[srv_id])
+            rt[srv_id] = neighbors[srv_id]
         # all others set to INF 
         else:
             rt[srv_id] = (-1, INF)
