@@ -18,6 +18,11 @@ import threading
 import time
 # 
 INF = 1000000000
+num_servers = 0
+num_neighbors = 0
+servers = {} # server_ID :(ip,port)  
+rc = []
+interval = 0
 
 '''
 
@@ -42,19 +47,48 @@ def p_args():
 
     Command: def read_top(): 
         Reads and processes the topology file
-    
-    To Do:
-    - open topology file given 'path'
-    - read each line and split data (ignore blanks/comments)
-    - get number of servers/neighbors from first 2 lines
-    - store each server ID, IP & port in a dictionary
-    - store the remaining lines in a list (rc)
-    - return both the dictionary & rc list
+        
+    Returns:
+        servers: dictionary of server_ID : (ip,port)
+        rc: list of remaining connections (server1, server2, cost)
 
 '''
 def read_top(path):
-    pass
+    path = "./" + path
+    
+    try:
+        with open(path,'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print('File not found:',path)
+        return
+        
+    # remove blank lines/comments
+    data = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            data.append(line)
 
+    # assign variables
+    num_servers = int(data[0])
+    num_neighbors = int(data[1])
+    
+    # assign server dictionary
+    for i in range(2, 2 + num_servers):
+        line = data[i].split()
+        srv_id = int(line[0])
+        ip = line[1]
+        port = int(line[2])
+        
+        servers.update({srv_id:(ip,port)})
+        
+    # assign remaining lines to rc
+    for j in range(2 + num_servers, 2 + num_servers + num_neighbors):
+        line = data[j].split()
+        rc.append(line)
+        
+    return servers, rc
 '''
 
     Command: def state(): 
