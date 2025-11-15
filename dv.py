@@ -126,7 +126,7 @@ def state(servers, rc, interval):
             rt[srv_id] = neighbors[srv_id]
         # all others set to INF 
         else:
-            rt[srv_id] = (-1, INF)
+            rt[srv_id] = INF
     # UDP socket for sending/receiving
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((my_ip, my_port))
@@ -207,7 +207,13 @@ def bell_ford():
 
 '''
 def data_pckt(state):
-    pass
+    packet = {
+        'user' : state['user'],
+        'my_ip' : state['my_ip'],
+        'my_port' : state['my_port'],
+        'rt' : {server_id: cost for server_id, cost in state['rt'].items()}
+    }
+    return json.dumps(packet).encode('utf-8')
 
 '''
 
