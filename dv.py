@@ -305,8 +305,19 @@ def dead_neigh(state):
         - print 
 
 '''
-def update():
-    pass
+def update(server1, server2, cost):
+    if state['user'] == server1:
+        neighbor = server2
+    elif state['user'] == server2:
+        neighbor = server1
+    else:
+        print("Error: One of the servers must be the user server.")
+        return
+    with state['lock']:
+        # update neighbor cost
+        state['neighbors'][neighbor] = cost
+        # update routing table for neighbor
+        state['rt'][neighbor] = (neighbor, cost)
 
 '''
 
