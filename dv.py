@@ -126,7 +126,7 @@ def state(servers, rc, interval):
             rt[srv_id] = (srv_id ,neighbors[srv_id])
         # all others set to INF 
         else:
-            rt[srv_id] = INF
+            rt[srv_id] = (-1, INF)
     # UDP socket for sending/receiving
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((my_ip, my_port))
@@ -155,14 +155,6 @@ def state(servers, rc, interval):
     Command: def rx():
         Receive incoming UDP packets.
 
-    To Do:
-        - wait for incoming data from UDP socket
-        - decode and aprse the packet (json)
-        - identify which server sent
-        - update the 'last' heard time from sender
-        - call bell_ford() to apply distance vector updates
-
-
 '''
 def rx(state):
     while not state['stop'].is_set():
@@ -188,15 +180,10 @@ def rx(state):
         except Exception as e:
             print(f"Error receiving packet: {e}")
 
-''''
+'''
 
     Command: def tx():
         Handles periodic updates and neighbor checks
-
-    To Do:
-        - repeatedly call snd_update to send routing info
-        - call dead_neigh() to mark inactive neighbor
-        - sleep for interval set in state before looping again
 
 '''
 def tx(state):
@@ -218,27 +205,28 @@ def tx(state):
 
 '''
 def bell_ford(state, snd, snd_rt):
-   # cost from user to sender
-   with state['lock']:
-    hop, c2s = state['rt'].get(snd, (-1, INF))
+    # cost from user to sender
+    with state['lock']:
+        _, c2s = state['rt'].get(snd, (-1, INF))
 
-    # check destination (sender) knows
-    for dstr, sndc in snd_rt.items():
-        # convert json to int
-        d = int(dstr)
-        sndc = int(sndc)
+        # check  destination (sender) knows
+        for dstr, sndc in snd_rt.items():
+            # convert json to int
+            d = int(dstr)
+            sndc = int(sndc)
 
-        # new cost from sender
-        if c2s == INF or sndc == INF:
-            new = INF
-        else: 
-            new = c2s + sndc
-        # current cost -> table
-        curr = state['rt'].get(d, (-1, INF))
+            # compute cost via sender
+            if c2s == INF or sndc == INF:
+                new = INF
+            else:
+                new = c2s + sndc
 
-        # update if path is less
-        if  new < curr:
-            state['rt'][d] = (snd, new)
+            # current -> table
+            _, curr = state['rt'].get(d, (-1, INF))
+
+            # update if new path is cheaper
+            if new < curr:
+                state['rt'][d] = (snd, new)
 
 
 '''
@@ -246,14 +234,9 @@ def bell_ford(state, snd, snd_rt):
     Command: def data_pckt():
         Builds the routing update packet
 
-    To Do:
-        - create dictionary that includes: user server ID, my_ip, my_port, routing
-            tbale (destination/cost)
-        - cnvert to json for sending with UDP
-
 '''
 def data_pckt(state):
-    with state ['lock']:
+    with state['lock']:
         rt_cost = {server_id: cost for server_id, (hop, cost) in state['rt'].items()}
     packet = {
         'user' : state['user'],
@@ -289,11 +272,6 @@ def snd_update(state):
     Command: def dead_neigh():
         Detects and handles dead neighbors
 
-    To Do:
-        - check when neighbor last sent update
-        - no message received for 3 intervals - mark as INF
-        - update the routing table
-
 '''
 def dead_neigh(state):
     # get current time
@@ -316,7 +294,7 @@ def dead_neigh(state):
                 for dest_id, (hop, cost) in state['rt'].items():
                     if hop == neighbor_id:
                         state['rt'][dest_id] = (-1, INF)
-''''
+'''
 
     Command: def update():
         Changes the cost of a link between two servers
@@ -358,16 +336,33 @@ def pckts(state):
 '''
 
     Command: def display():
-        Displays the current routing table
-
-    To Do:
-        - print each destination, hop & cost from routing table
-        - sort output by destination ID
-        - print
+        Displays the current routing table - prints each destination, current path cost and next hop.
 
 '''
 def display(state):
-    pass
+    # routing table not modified while print ('lock')
+    with state['lock']:
+        print("dest     |     cost     |     next hop")
+        
+        # go through each destination
+        for dest in sorted(state['rt'].keys()):
+            hop, cost = state['rt'][dest]
+            # format for cost (unreachable -> INF)
+            if cost >= INF:
+                c = "INF"
+            # int to string
+            else:
+                c = str(cost)
+            # format for hop (unreachable -> blank)
+            if hop == -1 or cost >= INF:
+                h = ''
+            # int to string
+            else:
+                h = str(hop)
+            
+            print(f"{dest:<9}|{c:^14}|{h:^14}")
+
+
 
 '''
 
