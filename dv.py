@@ -184,16 +184,32 @@ def tx(state):
 '''
 
     Command: bell_ford():
-        Bellman-Ford algorithm for distance vector updates
-
-    To Do:
-        - compare known costs to possible paths through neighbor
-        - cheaper route found = update routing table
-        - runs every time new data is received from neighbor
+        uses Bellman-Ford algorithm for distance vector updates, compares known cost to destination 
+        and cost through a neighbor (sender). If new path is less, table is updated.
 
 '''
-def bell_ford():
-    pass
+def bell_ford(state, snd, snd_rt):
+   # cost from user to sender
+    c2s = state['rt'].get(snd, INF)
+
+    # check destination (sender) knows
+    for dstr, sndc in snd_rt.items():
+        # convert json to int
+        d = int(dstr)
+        sndc = int(sndc)
+
+        # new cost from sender
+        if c2s == INF or sndc == INF:
+            new = INF
+        else: 
+            new = c2s + sndc
+        # current cost -> table
+        curr = state['rt'].get(d, INF)
+
+        # update if path is less
+        if  new < curr:
+            state['rt'][d] = new
+
 
 '''
 
@@ -218,15 +234,23 @@ def data_pckt(state):
 '''
 
     Command: def snd_update():
-        Sends routing updates to all neighbors
-
-    To Do:
-        - build the update packet using data_pckt()
-        - send to each active neighor using IP & port
+        Sends routing updates to all neighbors, uses data_pckt to build packet and send it 
+        through UDP socket.
 
 '''
 def snd_update(state):
-    pass
+    # build packet
+    pckt = data_pckt(state)
+    # go through each neighbor
+    for n_id in state['neighbors'].keys():
+        # get neighbor IP and Port
+        ip, port = state['servers'][n_id]
+        # send update packet to neighbor
+        try:
+            state['sock'].sendto(pckt,(ip, port))
+        # ignore send error (stops program from crashing)
+        except Exception:
+            pass
 
 '''
 
@@ -260,10 +284,6 @@ def update():
 
 Command: def step():
     manually triggers an update message
-
-To Do:
-    - call snd_update() 
-    - print 
 
 '''
 def step(state):
@@ -323,7 +343,7 @@ def crash(state):
     # go through all neighbors and mark as INF
     for s in list(state['neighbors'].keys()):
         state['neighbors'][s] = INF
-        state['rt'][s] = (-1, INF)
+        state['rt'][s] =  INF
     
     print('Bye!')
 
@@ -357,6 +377,8 @@ def cmnds(state):
 '''
 def main():
     args = p_args()
+    servers, l = read_top(args.topology)
+    st = state(servers, l, args.interval)
 
 
     main()
