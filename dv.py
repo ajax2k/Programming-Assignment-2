@@ -388,8 +388,52 @@ def crash(state):
         - call proper function for each command
         - loop until user exits program
 '''
+
+def help():
+    print("\nAvailable commands:")
+    print(" update <server1> <server2> <cost> - Update the cost of a link between two servers")
+    print(" step                              - Send routing update")
+    print(" pckts                             - Display the number of packets")
+    print(" display                           - Display the current routing table")
+    print(" disable <neighbor_id>             - Disable a link to a neighbor")
+    print(" crash                             - Simulate a server crash")
+    print(" exit                              - Exit the program")
+
 def cmnds(state):
-    pass
+    print("\nStarted Vector Routing Server.")
+    print(f"Server ID: {state['user']}")
+    print(f"Listening on IP: {state['my_ip']}:{state['my_port']}")
+    print("Type 'help' for a list of available commands.\n")      
+    while not state['stop'].is_set():
+        try:
+            cmd = input("> ").strip().split()
+            if not cmd:
+                continue
+            command = cmd[0].lower()
+            if command == 'help':
+                help()
+            elif command == 'update' and len(cmd) == 4:
+                update()
+            elif command == 'step':
+                step(state)
+            elif command == 'pckts':
+                pckts(state)
+            elif command == 'display':
+                display(state)
+            elif command == 'disable' and len(cmd) == 2:
+                disable()
+            elif command == 'crash':
+                crash(state)
+                break
+            elif command == 'exit':
+                print("Exiting program...")
+                state['stop'].set()
+                break
+            else:
+                print("Invalid command. Please try again.")
+                print("Type 'help' for a list of available commands.")
+        except Exception as e:
+            print(f"Error processing command: {e}")
 
 '''
 
@@ -409,5 +453,14 @@ def main():
     servers, l = read_top(args.topology)
     st = state(servers, l, args.interval)
 
+    try:
+        cmnds(st)
+    finally:
+        st['stop'].set()
+        st['sock'].close()
+        print("Server stopped.")
+
+if __name__ == "__main__":
+    main()
 
 
