@@ -73,6 +73,8 @@ def read_top(path):
     # assign variables
     num_servers = int(data[0])
     num_neighbors = int(data[1])
+
+    first_server_id = None
     
     # assign server dictionary
     for i in range(2, 2 + num_servers):
@@ -80,6 +82,9 @@ def read_top(path):
         srv_id = int(line[0])
         ip = line[1]
         port = int(line[2])
+
+        if first_server_id is None:
+            first_server_id = srv_id
         
         servers.update({srv_id:(ip,port)})
         
@@ -88,7 +93,7 @@ def read_top(path):
         line = data[j].split()
         rc.append(line)
         
-    return servers, rc
+    return servers, rc, first_server_id
 '''
 
     Command: def state(): 
@@ -96,9 +101,9 @@ def read_top(path):
         in order to create the socket, neighbors, routing table and state data
 
 '''
-def state(servers, rc, interval):
-    # user server ID (lowest)
-    user = sorted(servers.keys())[0]
+def state(servers, rc, interval, first_server_id):
+    # user server ID 
+    user = first_server_id
     my_ip, my_port = servers[user]
     # dictionary for neighbors and cost
     neighbors = {}
@@ -160,7 +165,7 @@ def rx(state):
     while not state['stop'].is_set():
         try:
             # wait for incoming data
-            data, addr = state['sock'].recvfrom(4096)
+            data, addr = state['sock'].recvfrom(1024)
             # decode and parse the packet
             packet = json.loads(data.decode('utf-8'))
 
@@ -177,8 +182,14 @@ def rx(state):
             bell_ford(state, from_server, neighbor_vector)
         except socket.timeout:
             continue
+        except json.JSONDecodeError:
+            continue 
+        except OSError as e:
+            if e.winerror != 10054:  # Ignore "Connection reset by peer" error
+                print(f"Socket error: {e}")
         except Exception as e:
-            print(f"Error receiving packet: {e}")
+            if not state['stop'].is_set():
+                print(f"Error receiving packet: {e}")
 
 '''
 
@@ -285,15 +296,15 @@ def dead_neigh(state):
             last_time = state['last'].get(neighbor_id, 0)
             # if no message received for 3 intervals, mark as INF
             if now - last_time > max_interval:
-                print(f"Neighbor {neighbor_id} is inactive. Marking as INF.")
-                state['neighbors'][neighbor_id] = INF
-                # update routing table for this neighbor
-                state['rt'][neighbor_id] = (neighbor_id, INF)
-                # if neighbor is marked as INF, update routing 
-                # table for all destinations that use this neighbor as hop
-                for dest_id, (hop, cost) in state['rt'].items():
-                    if hop == neighbor_id:
-                        state['rt'][dest_id] = (-1, INF)
+                if state['neighbors'][neighbor_id] < INF:
+                    state['neighbors'][neighbor_id] = INF
+                    # update routing table for this neighbor
+                    state['rt'][neighbor_id] = (neighbor_id, INF)
+                    # if neighbor is marked as INF, update routing 
+                    # table for all destinations that use this neighbor as hop
+                    for dest_id, (hop, cost) in state['rt'].items():
+                        if hop == neighbor_id:
+                            state['rt'][dest_id] = (-1, INF)
 '''
 
     Command: def update():
@@ -305,7 +316,13 @@ def dead_neigh(state):
         - print 
 
 '''
-def update(server1, server2, cost):
+def update(state, server1, server2, cost):
+    server1, server2 = int(server1), int(server2)
+    if isinstance(cost, str) and cost.lower() == 'inf':
+        cost = INF
+    else:
+        cost = int(cost)
+        
     if state['user'] == server1:
         neighbor = server2
     elif state['user'] == server2:
@@ -318,6 +335,7 @@ def update(server1, server2, cost):
         state['neighbors'][neighbor] = cost
         # update routing table for neighbor
         state['rt'][neighbor] = (neighbor, cost)
+    print("UPDATE SUCCESS")
 
 '''
 
@@ -372,8 +390,6 @@ def display(state):
                 h = str(hop)
             
             print(f"{dest:<9}|{c:^14}|{h:^14}")
-
-
 
 '''
 
@@ -443,7 +459,7 @@ def cmnds(state):
             if command == 'help':
                 help()
             elif command == 'update' and len(cmd) == 4:
-                update()
+                update(state, cmd[1], cmd[2], cmd[3])
             elif command == 'step':
                 step(state)
             elif command == 'pckts':
@@ -463,6 +479,10 @@ def cmnds(state):
             else:
                 print("Invalid command. Please try again.")
                 print("Type 'help' for a list of available commands.")
+        except KeyboardInterrupt:
+            print("\nExiting program...")
+            state['stop'].set()
+            break
         except Exception as e:
             print(f"Error processing command: {e}")
 
@@ -481,13 +501,25 @@ def cmnds(state):
 '''
 def main():
     args = p_args()
-    servers, l = read_top(args.topology)
-    st = state(servers, l, args.interval)
+    servers, l, first_server_id = read_top(args.topology)
+    st = state(servers, l, args.interval, first_server_id)
+
+    rcv_thread = threading.Thread(target=rx, args=(st,), daemon=True)
+    rcv_thread.start()
+
+    tsm_thread = threading.Thread(target=tx, args=(st,), daemon=True)
+    tsm_thread.start()
+
+    time.sleep(1)  # Give threads time to start
 
     try:
         cmnds(st)
     finally:
         st['stop'].set()
+
+        rcv_thread.join(timeout=1.0)
+        tsm_thread.join(timeout=1.0)
+
         st['sock'].close()
         print("Server stopped.")
 
