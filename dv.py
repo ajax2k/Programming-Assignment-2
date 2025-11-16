@@ -120,10 +120,10 @@ def state(servers, rc, interval):
     for srv_id in servers:
         # user has 0 cost
         if srv_id == user:
-            rt[srv_id] = 0
-        # neighbor use thier cost
+            rt[srv_id] = (srv_id, 0)
+        # neighbor use their cost
         elif srv_id in neighbors:
-            rt[srv_id] = neighbors[srv_id]
+            rt[srv_id] = (srv_id ,neighbors[srv_id])
         # all others set to INF 
         else:
             rt[srv_id] = INF
@@ -146,7 +146,7 @@ def state(servers, rc, interval):
         'interval' : int(interval),
         'sock' : sock,
         'stop' : threading.Event(),
-
+        'lock' : threading.Lock()
     }
     
     return state
@@ -179,7 +179,15 @@ def rx(state):
 
 '''
 def tx(state):
-    pass
+    # continuously listen for incoming packets
+    while not state['stop'].is_set():
+        # wait for incoming data
+        snd_update(state)
+        # Check for dead neighbors
+        dead_neigh(state)
+        # Sleep for the specified interval before sending the next update
+        # has 0.2 second minimum to prevent misinput from user commands
+        time.sleep(max(0.2, state['interval']))
 
 '''
 
@@ -223,11 +231,13 @@ def bell_ford(state, snd, snd_rt):
 
 '''
 def data_pckt(state):
+    with state ['lock']:
+        rt_cost = {server_id: cost for server_id, (hop, cost) in state['rt'].items()}
     packet = {
         'user' : state['user'],
         'my_ip' : state['my_ip'],
         'my_port' : state['my_port'],
-        'rt' : {server_id: cost for server_id, cost in state['rt'].items()}
+        'rt' : rt_cost
     }
     return json.dumps(packet).encode('utf-8')
 
@@ -264,8 +274,26 @@ def snd_update(state):
 
 '''
 def dead_neigh(state):
-    pass
-
+    # get current time
+    now = time.time()
+    with state['lock']:
+        # calculate max interval for inactivity
+        max_interval = state['interval'] * 3
+        # loop through neighbors and check last heard time
+        for neighbor_id in list(state['neighbors'].keys()):
+            # check last heard time for neighbor
+            last_time = state['last'].get(neighbor_id, 0)
+            # if no message received for 3 intervals, mark as INF
+            if now - last_time > max_interval:
+                print(f"Neighbor {neighbor_id} is inactive. Marking as INF.")
+                state['neighbors'][neighbor_id] = INF
+                # update routing table for this neighbor
+                state['rt'][neighbor_id] = (neighbor_id, INF)
+                # if neighbor is marked as INF, update routing 
+                # table for all destinations that use this neighbor as hop
+                for dest_id, (hop, cost) in state['rt'].items():
+                    if hop == neighbor_id:
+                        state['rt'][dest_id] = (-1, INF)
 ''''
 
     Command: def update():
@@ -340,10 +368,11 @@ def disable():
 
 '''
 def crash(state):
-    # go through all neighbors and mark as INF
-    for s in list(state['neighbors'].keys()):
-        state['neighbors'][s] = INF
-        state['rt'][s] =  INF
+    with state['lock']:
+        # go through all neighbors and mark as INF
+        for s in list(state['neighbors'].keys()):
+            state['neighbors'][s] = INF
+            state['rt'][s] = (-1, INF)
     
     print('Bye!')
 
@@ -381,4 +410,4 @@ def main():
     st = state(servers, l, args.interval)
 
 
-    main()
+
