@@ -165,7 +165,28 @@ def state(servers, rc, interval):
 
 '''
 def rx(state):
-    pass
+    while not state['stop'].is_set():
+        try:
+            # wait for incoming data
+            data, addr = state['sock'].recvfrom(4096)
+            # decode and parse the packet
+            packet = json.loads(data.decode('utf-8'))
+
+            # identify which server sent the packet + info about neighbors
+            from_server = packet['user']
+            neighbor_vector = packet['rt']
+
+            # update the 'last' heard time from sender
+            with state['lock']:
+                state['pkts'] += 1
+                if from_server in state['neighbors']:
+                    state['last'][from_server] = time.time()
+            # call bell_ford() to apply distance vector updates
+            bell_ford(state, from_server, neighbor_vector)
+        except socket.timeout:
+            continue
+        except Exception as e:
+            print(f"Error receiving packet: {e}")
 
 ''''
 
@@ -198,7 +219,8 @@ def tx(state):
 '''
 def bell_ford(state, snd, snd_rt):
    # cost from user to sender
-    c2s = state['rt'].get(snd, INF)
+   with state['lock']:
+    hop, c2s = state['rt'].get(snd, (-1, INF))
 
     # check destination (sender) knows
     for dstr, sndc in snd_rt.items():
@@ -212,11 +234,11 @@ def bell_ford(state, snd, snd_rt):
         else: 
             new = c2s + sndc
         # current cost -> table
-        curr = state['rt'].get(d, INF)
+        curr = state['rt'].get(d, (-1, INF))
 
         # update if path is less
         if  new < curr:
-            state['rt'][d] = new
+            state['rt'][d] = (snd, new)
 
 
 '''
@@ -315,7 +337,9 @@ Command: def step():
 
 '''
 def step(state):
-    pass
+    print('Sending routing update...')
+    snd_update(state)
+    print('Update sent.')
 
 '''
 
@@ -424,6 +448,7 @@ def cmnds(state):
                 disable()
             elif command == 'crash':
                 crash(state)
+                state['stop'].set()
                 break
             elif command == 'exit':
                 print("Exiting program...")
