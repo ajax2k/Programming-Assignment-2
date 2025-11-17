@@ -157,6 +157,36 @@ def state(servers, rc, interval, first_server_id):
     }
     
     return state
+
+def handle_link_update(state, link_info):
+    server1 = int(link_info['server1'])
+    server2 = int(link_info['server2'])
+    cost = int(link_info['cost'])
+    with state['lock']:
+        if state['user'] == server1 and server2 in state['neighbors']:
+            # This means the user is server1 and server2 is a neighbor, so we update the cost
+            state['neighbors'][server2] = cost
+            state['base_cost'][server2] = cost
+            state['rt'][server2] = (server2, cost)
+        elif state['user'] == server2 and server1 in state['neighbors']:
+            # This means the user is server2 and server1 is a neighbor, so we update the cost
+            state['neighbors'][server1] = cost
+            state['base_cost'][server1] = cost
+            state['rt'][server1] = (server1, cost)
+
+def update_neighbor_status(state, from_server):
+    with state['lock']:
+        state['pkts'] += 1
+        if from_server in state['neighbors']:
+            # update last heard time
+            state['last'][from_server] = time.time()
+            
+            # if neighbor was marked as INF, reset to base cost
+            if state['neighbors'][from_server] >= INF:
+                base = state['base_cost'].get(from_server, INF)
+                state['neighbors'][from_server] = base
+                state['rt'][from_server] = (from_server, base)
+
 '''
 
     Command: def rx():
@@ -180,30 +210,11 @@ def rx(state):
                 print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
 
             if 'link_update' in packet:
-                link_info = packet['link_update']
-                s1 = link_info['server1']
-                s2 = link_info['server2']
-                cost = link_info['cost']
-
-                with state['lock']:
-                    if state['user'] == s1 and s2 in state['neighbors']:
-                        state['neighbors'][s2] = cost
-                        state['base_cost'][s2] = cost
-                        state['rt'][s2] = (s2, cost)
-                    elif state['user'] == s2 and s1 in state['neighbors']:
-                        state['neighbors'][s1] = cost
-                        state['base_cost'][s1] = cost
-                        state['rt'][s1] = (s1, cost)
+                handle_link_update(state, packet['link_update'])
 
             # update the 'last' heard time from sender
-            with state['lock']:
-                state['pkts'] += 1
-                if from_server in state['neighbors']:
-                    state['last'][from_server] = time.time()
-                    if state['neighbors'][from_server] >= INF:
-                        base = state['base_cost'].get(from_server, INF)
-                        state['neighbors'][from_server] = base
-                        state['rt'][from_server] = (from_server, base)
+            update_neighbor_status(state, from_server)
+            
             # call bell_ford() to apply distance vector updates
             bell_ford(state, from_server, neighbor_vector)
         except socket.timeout:
