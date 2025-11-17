@@ -5,8 +5,8 @@
         The protocol runs on top of four servers using UDP. Each server reads information
         from a topology file and exchanges routing updates with its neighbors
             - parses topology file which contains servers, ports and link costs
-            - creates UDP socket for sending/recieving messages
-            - uses bellman-ford algorithm for updating routing tables
+            - creates UDP socket for sending/receiving messages
+            - uses Bellman-Ford algorithm for updating routing tables
             - user commands:  update, step, display, disable, crash, and exit
             - sends routing updates (every few seconds)
 
@@ -16,7 +16,7 @@ import argparse
 import json
 import threading
 import time
-# 
+# constant - infinite cost
 INF = 1000000000
 num_servers = 0
 num_neighbors = 0
@@ -51,14 +51,17 @@ def p_args():
     Returns:
         servers: dictionary of server_ID : (ip,port)
         rc: list of remaining connections (server1, server2, cost)
+        first_server_id: first server ID in file
 
 '''
 def read_top(path):
+    # directory prefix
     path = "./" + path
-    
     try:
+        # read lines from file
         with open(path,'r') as f:
             lines = f.readlines()
+    # file not found
     except FileNotFoundError:
         print('File not found:',path)
         return
@@ -70,10 +73,10 @@ def read_top(path):
         if line and not line.startswith('#'):
             data.append(line)
 
-    # assign variables
+    # assign variables - counts
     num_servers = int(data[0])
     num_neighbors = int(data[1])
-
+    # track first server ID
     first_server_id = None
     
     # assign server dictionary
@@ -82,10 +85,10 @@ def read_top(path):
         srv_id = int(line[0])
         ip = line[1]
         port = int(line[2])
-
+        # store the first server id
         if first_server_id is None:
             first_server_id = srv_id
-        
+        # add entry for server id
         servers.update({srv_id:(ip,port)})
         
     # assign remaining lines to rc
@@ -157,11 +160,18 @@ def state(servers, rc, interval, first_server_id):
     }
     
     return state
+'''
 
+    Command: def handle_link_update(): processes the cost between servers and updates accordingly
+                                (neighbor, base cost, routing)
+
+'''
 def handle_link_update(state, link_info):
+    # ids and new cost from update
     server1 = int(link_info['server1'])
     server2 = int(link_info['server2'])
     cost = int(link_info['cost'])
+    # update safely with lock 
     with state['lock']:
         if state['user'] == server1 and server2 in state['neighbors']:
             # This means the user is server1 and server2 is a neighbor, so we update the cost
@@ -173,9 +183,16 @@ def handle_link_update(state, link_info):
             state['neighbors'][server1] = cost
             state['base_cost'][server1] = cost
             state['rt'][server1] = (server1, cost)
+'''
 
+
+   Command: def update_neighbor_status(): handles packet from neighbor by restoring cost if it was previously
+                                    unreachable
+
+'''
 def update_neighbor_status(state, from_server):
     with state['lock']:
+        # packet count
         state['pkts'] += 1
         if from_server in state['neighbors']:
             # update last heard time
@@ -190,7 +207,8 @@ def update_neighbor_status(state, from_server):
 '''
 
     Command: def rx():
-        Receive incoming UDP packets.
+        listens for incoming UDP packets, parses and handles cost updates. Able to refresh neighbors and trigger
+        DV 
 
 '''
 def rx(state):
@@ -231,7 +249,7 @@ def rx(state):
 '''
 
     Command: def tx():
-        Handles periodic updates and neighbor checks
+        Handles periodic updates to neighbors, checks failed neighbors and implements interval update
 
 '''
 def tx(state):
@@ -290,14 +308,16 @@ def bell_ford(state, snd, snd_rt):
 '''
 def data_pckt(state, reason=None, link_update=None):
     with state['lock']:
+        # take cost from routing table
         rt_cost = {server_id: cost for server_id, (hop, cost) in state['rt'].items()}
+    # base information
     packet = {
         'user' : state['user'],
         'my_ip' : state['my_ip'],
         'my_port' : state['my_port'],
         'rt' : rt_cost
     }
-    # add reason for udpate if provided
+    # add reason for update if provided
     if reason is not None:
         packet['reason'] = reason
 
@@ -342,7 +362,8 @@ def invalidate_routes(state, neighbor_id):
 '''
 
     Command: def dead_neigh():
-        Detects and handles dead neighbors
+        Detects and handles inactive neighbors, marks unreachable with INF and routes no longer valid for neighbors
+        that expected them
 
 '''
 def dead_neigh(state):
@@ -370,21 +391,19 @@ def dead_neigh(state):
 '''
 
     Command: def update():
-        Changes the cost of a link between two servers
-
-    To Do:
-        - take two server IDs and a new cost from user
-        - update the cost in neighbors & routing table
-        - print 
+        Changes the cost of a link between two servers, normalizes cost, updates neighbor/routing tables
+        and informs other servers
 
 '''
 def update(state, server1, server2, cost):
+    # server ids to int
     server1, server2 = int(server1), int(server2)
+    # cost to int or INF
     if isinstance(cost, str) and cost.lower() == 'inf':
         cost = INF
     else:
         cost = int(cost)
-
+    # which server is neighbor
     if state['user'] == server1:
         neighbor = server2
     elif state['user'] == server2:
@@ -399,6 +418,7 @@ def update(state, server1, server2, cost):
         # update routing table for neighbor
         state['rt'][neighbor] = (neighbor, cost)
     print("UPDATE SUCCESS")
+    # send update - cost change
     snd_update(state, reason='update', link_update=(server1, server2, cost))
 
 '''
@@ -456,30 +476,34 @@ def display(state):
 
 '''
 
-    Command: def disable():
-        Disables a link to a neighbor
+    Command: def recalculate_routes(): rebuilds routing table - neighbor is disabled, cost reset for servers 
+                based on neighbors
 
-    To Do:
-        - take a neighbor ID as input
-        - set that neigbors cost to INF in table
-        - update routing table (disconnection)
-        - print
 
 '''
 # helper function to recalculate routes after disabling a neighbor
 def recalculate_routes(state):
     for server_id in state['servers']:
+        # 0 cost for user
         if server_id == state['user']:
             state['rt'][server_id] = (server_id, 0)
+        # direct neighbor
         elif server_id in state['neighbors']:
             cost = state['neighbors'][server_id]
+            # unreachable (INF)
             if cost >= INF:
                 state['rt'][server_id] = (-1, INF)
             else:
                 state['rt'][server_id] = (server_id, cost)
+        # not a neighbor
         else:
             state['rt'][server_id] = (-1, INF)
+'''
 
+    Command: def disable(): direct neighbor unreachable (INF), recalculates and informs servers 
+                            of disabled link
+
+'''
 def disable(state, server_id):
     server_id = int(server_id)
 
@@ -522,19 +546,12 @@ def crash(state):
     
     print('Bye!')
 
+
 '''
 
-    Command: def cmnds():
-        Handles all user commands entered during execution
+    Command: def help(): prints a list of commands with descriptions
 
-    To Do:
-        - continuously wait for user input
-        - read the command, split into parts & match to function
-        - handle: update, step, pckts, display, disable, crash & exit
-        - call proper function for each command
-        - loop until user exits program
 '''
-
 def help():
     print("\nAvailable commands:")
     print(" update <server1> <server2> <cost> - Update the cost of a link between two servers")
@@ -545,38 +562,54 @@ def help():
     print(" crash                             - Simulate a server crash")
     print(" exit                              - Exit the program")
 
+'''
+
+    Command: def cmnds(): command loop for the server, reads input and outputs commands
+
+'''
 def cmnds(state):
     print("\nStarted Vector Routing Server.")
     print(f"Server ID: {state['user']}")
     print(f"Listening on IP: {state['my_ip']}:{state['my_port']}")
-    print("Type 'help' for a list of available commands.\n")      
+    print("Type 'help' for a list of available commands.\n")  
+    
     while not state['stop'].is_set():
         try:
+            # read input 
             cmd = input("> ").strip().split()
             if not cmd:
                 continue
+            # command keyword
             command = cmd[0].lower()
             if command == 'help':
                 help()
             elif command == 'update' and len(cmd) == 4:
+                # update servers
                 update(state, cmd[1], cmd[2], cmd[3])
             elif command == 'step':
+                # routing update
                 step(state)
             elif command == 'pckts':
+                # display packets
                 pckts(state)
             elif command == 'display':
+                # display routing table
                 display(state)
             elif command == 'disable' and len(cmd) == 2:
+                # disable neighbor
                 disable(state, cmd[1])
             elif command == 'crash':
+                # stop server & exit (crash)
                 crash(state)
                 state['stop'].set()
                 break
+            # clean exit not crash 
             elif command == 'exit':
                 print("Exiting program...")
                 state['stop'].set()
                 break
             else:
+                # incorrect command input
                 print("Invalid command. Please try again.")
                 print("Type 'help' for a list of available commands.")
         except KeyboardInterrupt:
@@ -588,15 +621,10 @@ def cmnds(state):
 
 '''
 
-    Main: def main():
-        executes the program to test the distance vector algorithm and UDP connections
+    Main: def main(): loads topology, creates server state, starts the threads, runs command loop and shuts 
+    down program (clean exit)
 
-    To Do:
-        - use read_top to load topology file 
-        - create main state dictionary (call state())
-        - start rx/tx thread for sending/receiving
-        - call cmnds to begin loop
-        - stop all thread & close socket when user exits
+   
 
 '''
 def main():
