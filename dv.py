@@ -164,15 +164,23 @@ def handle_link_update(state, link_info):
     cost = int(link_info['cost'])
     with state['lock']:
         if state['user'] == server1 and server2 in state['neighbors']:
-            # This means the user is server1 and server2 is a neighbor, so we update the cost
             state['neighbors'][server2] = cost
             state['base_cost'][server2] = cost
-            state['rt'][server2] = (server2, cost)
+            if cost >= INF:
+                # Link is disabled, invalidate routes through it
+                state['rt'][server2] = (-1, INF)
+                invalidate_routes(state, server2)
+            else:
+                state['rt'][server2] = (server2, cost)
         elif state['user'] == server2 and server1 in state['neighbors']:
-            # This means the user is server2 and server1 is a neighbor, so we update the cost
             state['neighbors'][server1] = cost
             state['base_cost'][server1] = cost
-            state['rt'][server1] = (server1, cost)
+            if cost >= INF:
+                # Link is disabled, invalidate routes through it
+                state['rt'][server1] = (-1, INF)
+                invalidate_routes(state, server1)
+            else:
+                state['rt'][server1] = (server1, cost)
 
 def update_neighbor_status(state, from_server):
     with state['lock']:
@@ -181,11 +189,13 @@ def update_neighbor_status(state, from_server):
             # update last heard time
             state['last'][from_server] = time.time()
             
-            # if neighbor was marked as INF, reset to base cost
+            # Only revive if base_cost is not INF (not manually disabled)
             if state['neighbors'][from_server] >= INF:
                 base = state['base_cost'].get(from_server, INF)
-                state['neighbors'][from_server] = base
-                state['rt'][from_server] = (from_server, base)
+                # Don't revive if the base cost itself is INF
+                if base < INF:
+                    state['neighbors'][from_server] = base
+                    state['rt'][from_server] = (from_server, base)
 
 '''
 
@@ -253,33 +263,31 @@ def tx(state):
 
 '''
 def bell_ford(state, snd, snd_rt):
-    # cost from user to sender
+    snd = int(snd)
     with state['lock']:
-        _, c2s = state['rt'].get(snd, (-1, INF))
+        # Use the DIRECT link cost to the sender, not the routing-table entry.
+        c2s = state['neighbors'].get(snd, INF)
 
-        # check  destination (sender) knows
+        # Process each destination advertised by the sender
         for dstr, sndc in snd_rt.items():
-            # convert json to int
             d = int(dstr)
             sndc = int(sndc)
 
-            # compute cost via sender
-            if c2s == INF or sndc == INF:
-                new = INF
-            else:
-                new = c2s + sndc
+            if d == state['user']:
+                continue  # never update route to self from DV
 
-            # current -> table
-            _, curr = state['rt'].get(d, (-1, INF))
+            # Candidate cost via 'snd'
+            new = INF if (c2s >= INF or sndc >= INF) else (c2s + sndc)
 
-            # update if new path is cheaper
-            if new < curr:
+            cur_hop, cur_cost = state['rt'].get(d, (-1, INF))
+
+            # 1) Improve if strictly cheaper
+            if new < cur_cost:
                 state['rt'][d] = (snd, new)
-            
-            # if sender's cost to destination is INF, mark as unreachable
-            if _ == snd and new != curr:
+            # 2) Track increases (including to INF) when our current next hop is the sender
+            elif cur_hop == snd and new != cur_cost:
                 state['rt'][d] = (snd, new)
-                continue
+
 
 
 '''
@@ -474,7 +482,7 @@ def recalculate_routes(state):
         elif server_id in state['neighbors']:
             cost = state['neighbors'][server_id]
             if cost >= INF:
-                state['rt'][server_id] = (-1, INF)
+                state['rt'][server_id] = (server_id, INF)
             else:
                 state['rt'][server_id] = (server_id, cost)
         else:
@@ -492,13 +500,9 @@ def disable(state, server_id):
         state['neighbors'][server_id] = INF
         state['base_cost'][server_id] = INF
 
-        recalculate_routes(state)
-
-        # update routing table for all destinations that use this neighbor as hop
-        for dest_id in list(state['rt'].keys()):
-            hop, cost = state['rt'][dest_id]
-            if hop == server_id:
-                state['rt'][dest_id] = (-1, INF)
+        state['rt'][server_id] = (server_id, INF)
+        invalidate_routes(state, server_id)
+        #recalculate_routes(state)
     print(f"SUCCESS: Link to neighbor {server_id} disabled.")
     # send update to neighbors about the link cost change
     snd_update(state, reason='update', link_update=(state['user'], server_id, INF))
@@ -518,7 +522,7 @@ def crash(state):
         # go through all neighbors and mark as INF
         for s in list(state['neighbors'].keys()):
             state['neighbors'][s] = INF
-            state['rt'][s] = (-1, INF)
+            state['rt'][s] = (s, INF)
     
     print('Bye!')
 
