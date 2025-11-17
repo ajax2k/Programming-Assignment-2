@@ -207,7 +207,7 @@ def rx(state):
             neighbor_vector = packet['rt']
 
             if packet.get('reason') == 'step':
-                print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
+                print(f"RECEIVED MESSAGE FROM SERVER {addr}")
 
             if 'link_update' in packet:
                 handle_link_update(state, packet['link_update'])
