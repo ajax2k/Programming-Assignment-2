@@ -179,6 +179,22 @@ def rx(state):
             if packet.get('reason') == 'step':
                 print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
 
+            if 'link_update' in packet:
+                link_info = packet['link_update']
+                s1 = link_info['server1']
+                s2 = link_info['server2']
+                cost = link_info['cost']
+
+                with state['lock']:
+                    if state['user'] == s1 and s2 in state['neighbors']:
+                        state['neighbors'][s2] = cost
+                        state['base_cost'][s2] = cost
+                        state['rt'][s2] = (s2, cost)
+                    elif state['user'] == s2 and s1 in state['neighbors']:
+                        state['neighbors'][s1] = cost
+                        state['base_cost'][s1] = cost
+                        state['rt'][s1] = (s1, cost)
+
             # update the 'last' heard time from sender
             with state['lock']:
                 state['pkts'] += 1
@@ -261,7 +277,7 @@ def bell_ford(state, snd, snd_rt):
         Builds the routing update packet
 
 '''
-def data_pckt(state, reason=None):
+def data_pckt(state, reason=None, link_update=None):
     with state['lock']:
         rt_cost = {server_id: cost for server_id, (hop, cost) in state['rt'].items()}
     packet = {
@@ -272,6 +288,14 @@ def data_pckt(state, reason=None):
     }
     if reason is not None:
         packet['reason'] = reason
+
+    if link_update is not None:
+        server1, server2, cost = link_update
+        packet['link_update'] = {
+            'server1': server1,
+            'server2': server2,
+            'cost': cost
+        }
     return json.dumps(packet).encode('utf-8')
 
 '''
@@ -281,9 +305,9 @@ def data_pckt(state, reason=None):
         through UDP socket.
 
 '''
-def snd_update(state, reason=None):
+def snd_update(state, reason=None, link_update=None):
     # build packet
-    pckt = data_pckt(state, reason=reason)
+    pckt = data_pckt(state, reason=reason, link_update=link_update)
 
     with state['lock']:
     # go through each neighbor and send the packet
@@ -354,6 +378,7 @@ def update(state, server1, server2, cost):
         # update routing table for neighbor
         state['rt'][neighbor] = (neighbor, cost)
     print("UPDATE SUCCESS")
+    snd_update(state, reason='update', link_update=(server1, server2, cost))
 
 '''
 
