@@ -466,6 +466,20 @@ def display(state):
         - print
 
 '''
+# helper function to recalculate routes after disabling a neighbor
+def recalculate_routes(state):
+    for server_id in state['servers']:
+        if server_id == state['user']:
+            state['rt'][server_id] = (server_id, 0)
+        elif server_id in state['neighbors']:
+            cost = state['neighbors'][server_id]
+            if cost >= INF:
+                state['rt'][server_id] = (-1, INF)
+            else:
+                state['rt'][server_id] = (server_id, cost)
+        else:
+            state['rt'][server_id] = (-1, INF)
+
 def disable(state, server_id):
     server_id = int(server_id)
 
@@ -478,7 +492,7 @@ def disable(state, server_id):
         state['neighbors'][server_id] = INF
         state['base_cost'][server_id] = INF
 
-        state['rt'][server_id] = (-1, INF)
+        recalculate_routes(state)
 
         # update routing table for all destinations that use this neighbor as hop
         for dest_id in list(state['rt'].keys()):
@@ -486,7 +500,11 @@ def disable(state, server_id):
             if hop == server_id:
                 state['rt'][dest_id] = (-1, INF)
     print(f"SUCCESS: Link to neighbor {server_id} disabled.")
-    snd_update(state)
+    # send update to neighbors about the link cost change
+    snd_update(state, reason='update', link_update=(state['user'], server_id, INF))
+    time.sleep(0.2)  # Give time for the update to propagate
+    # send another update to ensure all neighbors are aware of the change
+    snd_update(state, reason='step')
 
 '''
 
