@@ -121,6 +121,7 @@ def state(servers, rc, interval, first_server_id):
         elif s2 == user:
             neighbors[s1] = cost
     # routing table for servers
+    base_cost = dict(neighbors)
     rt = {}
     for srv_id in servers:
         # user has 0 cost
@@ -137,11 +138,12 @@ def state(servers, rc, interval, first_server_id):
     sock.bind((my_ip, my_port))
     sock.settimeout(1.0)
     # track when neighbor heard from last
-    last = {n: time.time() for n in neighbors}
+    last = {n: 0.0 for n in neighbors}
     # state dictionary
     state = {
         'servers' : servers,
         'neighbors' : neighbors,
+        'base_cost' : base_cost,
         'rt' : rt,
         'pkts' : 0,
         'last' : last,
@@ -170,7 +172,8 @@ def rx(state):
             packet = json.loads(data.decode('utf-8'))
 
             # identify which server sent the packet + info about neighbors
-            from_server = packet['user']
+            from_server = int(packet['user'])
+            
             neighbor_vector = packet['rt']
 
             # update the 'last' heard time from sender
@@ -178,6 +181,10 @@ def rx(state):
                 state['pkts'] += 1
                 if from_server in state['neighbors']:
                     state['last'][from_server] = time.time()
+                    if state['neighbors'][from_server] >= INF:
+                        base = state['base_cost'].get(from_server, INF)
+                        state['neighbors'][from_server] = base
+                        state['rt'][from_server] = (from_server, base)
             # call bell_ford() to apply distance vector updates
             bell_ford(state, from_server, neighbor_vector)
         except socket.timeout:
@@ -200,10 +207,10 @@ def rx(state):
 def tx(state):
     # continuously listen for incoming packets
     while not state['stop'].is_set():
-        # wait for incoming data
-        snd_update(state)
         # Check for dead neighbors
         dead_neigh(state)
+        # wait for incoming data
+        snd_update(state)
         # Sleep for the specified interval before sending the next update
         # has 0.2 second minimum to prevent misinput from user commands
         time.sleep(max(0.2, state['interval']))
@@ -267,16 +274,16 @@ def data_pckt(state):
 def snd_update(state):
     # build packet
     pckt = data_pckt(state)
-    # go through each neighbor
-    for n_id in state['neighbors'].keys():
-        # get neighbor IP and Port
-        ip, port = state['servers'][n_id]
-        # send update packet to neighbor
-        try:
-            state['sock'].sendto(pckt,(ip, port))
-        # ignore send error (stops program from crashing)
-        except Exception:
-            pass
+
+    with state['lock']:
+    # go through each neighbor and send the packet
+        targets = [(n_id, state['servers'][n_id]) for n_id in state['neighbors'] if n_id in state['servers']]
+        for n_id, (ip, port) in targets:
+            try:
+                state['sock'].sendto(pckt,(ip, port))
+            # ignore send error (stops program from crashing)
+            except Exception:
+                pass
 
 '''
 
@@ -302,7 +309,7 @@ def dead_neigh(state):
                     state['rt'][neighbor_id] = (neighbor_id, INF)
                     # if neighbor is marked as INF, update routing 
                     # table for all destinations that use this neighbor as hop
-                    for dest_id, (hop, cost) in state['rt'].items():
+                    for dest_id, (hop, cost) in list(state['rt'].items()):
                         if hop == neighbor_id:
                             state['rt'][dest_id] = (-1, INF)
 '''
@@ -322,7 +329,7 @@ def update(state, server1, server2, cost):
         cost = INF
     else:
         cost = int(cost)
-        
+
     if state['user'] == server1:
         neighbor = server2
     elif state['user'] == server2:
@@ -333,6 +340,7 @@ def update(state, server1, server2, cost):
     with state['lock']:
         # update neighbor cost
         state['neighbors'][neighbor] = cost
+        state['base_cost'][neighbor] = cost
         # update routing table for neighbor
         state['rt'][neighbor] = (neighbor, cost)
     print("UPDATE SUCCESS")
@@ -346,7 +354,8 @@ Command: def step():
 def step(state):
     print('Sending routing update...')
     snd_update(state)
-    print('Update sent.')
+    from_server = state['user']
+    print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
 
 '''
 
