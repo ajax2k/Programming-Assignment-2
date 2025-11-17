@@ -214,7 +214,7 @@ def rx(state):
 
             # update the 'last' heard time from sender
             update_neighbor_status(state, from_server)
-            
+
             # call bell_ford() to apply distance vector updates
             bell_ford(state, from_server, neighbor_vector)
         except socket.timeout:
@@ -297,9 +297,11 @@ def data_pckt(state, reason=None, link_update=None):
         'my_port' : state['my_port'],
         'rt' : rt_cost
     }
+    # add reason for udpate if provided
     if reason is not None:
         packet['reason'] = reason
 
+    # add link update packet if provided
     if link_update is not None:
         server1, server2, cost = link_update
         packet['link_update'] = {
@@ -330,6 +332,13 @@ def snd_update(state, reason=None, link_update=None):
             except Exception:
                 pass
 
+# helper function to invalidate routes through any neighbors
+def invalidate_routes(state, neighbor_id):
+    for dest_id in list(state['rt'].keys()):
+        hop, _ = state['rt'][dest_id]
+        if hop == neighbor_id:
+            state['rt'][dest_id] = (-1, INF)
+
 '''
 
     Command: def dead_neigh():
@@ -339,24 +348,25 @@ def snd_update(state, reason=None, link_update=None):
 def dead_neigh(state):
     # get current time
     now = time.time()
+    # calculate max interval for inactivity
+    max_interval = state['interval'] * 3
+
     with state['lock']:
-        # calculate max interval for inactivity
-        max_interval = state['interval'] * 3
         # loop through neighbors and check last heard time
         for neighbor_id in list(state['neighbors'].keys()):
             # check last heard time for neighbor
             last_time = state['last'].get(neighbor_id, 0)
-            # if no message received for 3 intervals, mark as INF
-            if now - last_time > max_interval:
-                if state['neighbors'][neighbor_id] < INF:
-                    state['neighbors'][neighbor_id] = INF
-                    # update routing table for this neighbor
-                    state['rt'][neighbor_id] = (neighbor_id, INF)
-                    # if neighbor is marked as INF, update routing 
-                    # table for all destinations that use this neighbor as hop
-                    for dest_id, (hop, cost) in list(state['rt'].items()):
-                        if hop == neighbor_id:
-                            state['rt'][dest_id] = (-1, INF)
+            # if last heard time is within max interval, continue
+            if now - last_time <= max_interval:
+                continue
+            # if neighbor is already marked as INF, skip
+            if state['neighbors'][neighbor_id] >= INF:
+                continue
+
+            state['neighbors'][neighbor_id] = INF
+            state['rt'][neighbor_id] = (neighbor_id, INF)
+            invalidate_routes(state, neighbor_id)
+                
 '''
 
     Command: def update():
@@ -456,8 +466,27 @@ def display(state):
         - print
 
 '''
-def disable():
-    pass
+def disable(state, server_id):
+    server_id = int(server_id)
+
+    with state['lock']:
+        if server_id not in state['neighbors']:
+            print(f"Error: Server {server_id} is not a neighbor.")
+            return
+        
+        #set neighbor cost to INF
+        state['neighbors'][server_id] = INF
+        state['base_cost'][server_id] = INF
+
+        state['rt'][server_id] = (-1, INF)
+
+        # update routing table for all destinations that use this neighbor as hop
+        for dest_id in list(state['rt'].keys()):
+            hop, cost = state['rt'][dest_id]
+            if hop == server_id:
+                state['rt'][dest_id] = (-1, INF)
+    print(f"SUCCESS: Link to neighbor {server_id} disabled.")
+    snd_update(state)
 
 '''
 
@@ -466,7 +495,6 @@ def disable():
 
 
 '''
-
 def crash(state):
     with state['lock']:
         # go through all neighbors and mark as INF
@@ -521,7 +549,7 @@ def cmnds(state):
             elif command == 'display':
                 display(state)
             elif command == 'disable' and len(cmd) == 2:
-                disable()
+                disable(state, cmd[1])
             elif command == 'crash':
                 crash(state)
                 state['stop'].set()
