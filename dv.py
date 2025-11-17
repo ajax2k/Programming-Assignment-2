@@ -176,6 +176,9 @@ def rx(state):
             
             neighbor_vector = packet['rt']
 
+            if packet.get('reason') == 'step':
+                print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
+
             # update the 'last' heard time from sender
             with state['lock']:
                 state['pkts'] += 1
@@ -245,6 +248,11 @@ def bell_ford(state, snd, snd_rt):
             # update if new path is cheaper
             if new < curr:
                 state['rt'][d] = (snd, new)
+            
+            # if sender's cost to destination is INF, mark as unreachable
+            if _ == snd and new != curr:
+                state['rt'][d] = (snd, new)
+                continue
 
 
 '''
@@ -253,7 +261,7 @@ def bell_ford(state, snd, snd_rt):
         Builds the routing update packet
 
 '''
-def data_pckt(state):
+def data_pckt(state, reason=None):
     with state['lock']:
         rt_cost = {server_id: cost for server_id, (hop, cost) in state['rt'].items()}
     packet = {
@@ -262,6 +270,8 @@ def data_pckt(state):
         'my_port' : state['my_port'],
         'rt' : rt_cost
     }
+    if reason is not None:
+        packet['reason'] = reason
     return json.dumps(packet).encode('utf-8')
 
 '''
@@ -271,9 +281,9 @@ def data_pckt(state):
         through UDP socket.
 
 '''
-def snd_update(state):
+def snd_update(state, reason=None):
     # build packet
-    pckt = data_pckt(state)
+    pckt = data_pckt(state, reason=reason)
 
     with state['lock']:
     # go through each neighbor and send the packet
@@ -352,10 +362,8 @@ Command: def step():
 
 '''
 def step(state):
-    print('Sending routing update...')
-    snd_update(state)
-    from_server = state['user']
-    print(f"RECEIVED MESSAGE FROM SERVER {from_server}")
+    print('Sending routing update.')
+    snd_update(state, reason='step')
 
 '''
 
@@ -422,6 +430,7 @@ def disable():
 
 
 '''
+
 def crash(state):
     with state['lock']:
         # go through all neighbors and mark as INF
